@@ -23,7 +23,8 @@
   "scripts": {
     "test": "npm run lint && mocha",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit index.d.ts"
+    "typecheck": "tsc --noEmit index.d.ts",
+    "benchmark": "node benchmark/run.mjs"
   },
   "repository": {
     "type": "git",
