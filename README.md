@@ -1,5 +1,7 @@
 # sanitize-html
 
+> **Créditos:** todo o crédito pelo `sanitize-html` original vai para a [ApostropheCMS](https://github.com/apostrophecms/apostrophe). Este fork apenas converte o pacote para ESM; nenhuma lógica de sanitização foi criada aqui.
+
 <a href="https://apostrophecms.com/"><img src="https://raw.githubusercontent.com/apostrophecms/sanitize-html/main/logos/logo-box-madefor.png" align="right" /></a>
 
 sanitize-html provides a simple HTML sanitizer with a clear API.
