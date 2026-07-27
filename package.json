@@ -1,6 +1,6 @@
 {
   "name": "@joinrh/sanitize-html-esm",
-  "version": "2.17.6",
+  "version": "2.17.7",
   "description": "Clean up user-submitted HTML, preserving allowlisted elements and allowlisted attributes on a per-element basis. ESM fork of apostrophecms/sanitize-html.",
   "publishConfig": {
     "access": "public"
@@ -26,7 +26,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/luizfranzon/sanitize-html.git"
+    "url": "git+https://github.com/luizfranzon/sanitize-html.git"
   },
   "homepage": "https://github.com/luizfranzon/sanitize-html#readme",
   "keywords": [
@@ -45,13 +45,13 @@
     "escape-string-regexp": "^4.0.0",
     "htmlparser2": "^12.0.0",
     "is-plain-object": "^5.0.0",
-    "launder": "workspace:^",
+    "launder": "^1.7.1",
     "parse-srcset": "^1.0.2",
     "postcss": "^8.3.11"
   },
   "devDependencies": {
     "eslint": "^9.39.1",
-    "eslint-config-apostrophe": "workspace:^",
+    "eslint-config-apostrophe": "^6.0.2",
     "mocha": "^11.7.5",
     "sinon": "^9.0.2",
     "typescript": "^5.7.0"
