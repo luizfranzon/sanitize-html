@@ -1,441 +1,18 @@
 import * as htmlparser from 'htmlparser2';
 import { parse as postcssParse } from 'postcss';
-
-// Inlined from `is-plain-object` (https://github.com/jonschlinkert/is-plain-object)
-// to avoid a CommonJS-only dependency that defeats ESM-only bundling.
-function isPlainObjectValue(o) {
-  return Object.prototype.toString.call(o) === '[object Object]';
-}
-
-function isPlainObject(o) {
-  if (isPlainObjectValue(o) === false) {
-    return false;
-  }
-
-  const ctor = o.constructor;
-  if (ctor === undefined) {
-    return true;
-  }
-
-  const prot = ctor.prototype;
-  if (isPlainObjectValue(prot) === false) {
-    return false;
-  }
-
-  if (Object.prototype.hasOwnProperty.call(prot, 'isPrototypeOf') === false) {
-    return false;
-  }
-
-  return true;
-}
-
-// Inlined from `escape-string-regexp` (https://github.com/sindresorhus/escape-string-regexp)
-// to avoid a CommonJS-only dependency that defeats ESM-only bundling.
-function escapeStringRegexp(string) {
-  if (typeof string !== 'string') {
-    throw new TypeError('Expected a string');
-  }
-  return string
-    .replace(/[|\\{}()[\]^$+*?.]/g, '\\$&')
-    .replace(/-/g, '\\x2d');
-}
-
-// Inlined from `deepmerge` (https://github.com/TehShrike/deepmerge)
-// to avoid a CommonJS-only dependency that defeats ESM-only bundling.
-function deepmergeIsMergeableObject(value) {
-  return deepmergeIsNonNullObject(value) && !deepmergeIsSpecial(value);
-}
-
-function deepmergeIsNonNullObject(value) {
-  return !!value && typeof value === 'object';
-}
-
-function deepmergeIsSpecial(value) {
-  const stringValue = Object.prototype.toString.call(value);
-  return stringValue === '[object RegExp]' || stringValue === '[object Date]';
-}
-
-function deepmergeEmptyTarget(val) {
-  return Array.isArray(val) ? [] : {};
-}
-
-function deepmergeCloneUnlessOtherwiseSpecified(value, options) {
-  return (options.clone !== false && options.isMergeableObject(value))
-    ? deepmerge(deepmergeEmptyTarget(value), value, options)
-    : value;
-}
-
-function deepmergeDefaultArrayMerge(target, source, options) {
-  return target.concat(source).map(function (element) {
-    return deepmergeCloneUnlessOtherwiseSpecified(element, options);
-  });
-}
-
-function deepmergeGetKeys(target) {
-  return Object.keys(target).concat(
-    Object.getOwnPropertySymbols
-      ? Object.getOwnPropertySymbols(target).filter(function (symbol) {
-        return Object.propertyIsEnumerable.call(target, symbol);
-      })
-      : []
-  );
-}
-
-function deepmergePropertyIsOnObject(object, property) {
-  try {
-    return property in object;
-  } catch {
-    return false;
-  }
-}
-
-// Protects from prototype poisoning and unexpected merging up the prototype chain.
-function deepmergePropertyIsUnsafe(target, key) {
-  return deepmergePropertyIsOnObject(target, key) &&
-    !(
-      Object.hasOwnProperty.call(target, key) &&
-      Object.propertyIsEnumerable.call(target, key)
-    );
-}
-
-function deepmergeMergeObject(target, source, options) {
-  const destination = {};
-  if (options.isMergeableObject(target)) {
-    deepmergeGetKeys(target).forEach(function (key) {
-      destination[key] = deepmergeCloneUnlessOtherwiseSpecified(target[key], options);
-    });
-  }
-  deepmergeGetKeys(source).forEach(function (key) {
-    if (deepmergePropertyIsUnsafe(target, key)) {
-      return;
-    }
-    const targetHasMergeableSource = deepmergePropertyIsOnObject(target, key) &&
-      options.isMergeableObject(source[key]);
-    if (targetHasMergeableSource) {
-      destination[key] = deepmerge(target[key], source[key], options);
-    } else {
-      destination[key] = deepmergeCloneUnlessOtherwiseSpecified(source[key], options);
-    }
-  });
-  return destination;
-}
-
-function deepmerge(target, source, options) {
-  options = options || {};
-  options.arrayMerge = options.arrayMerge || deepmergeDefaultArrayMerge;
-  options.isMergeableObject = options.isMergeableObject || deepmergeIsMergeableObject;
-
-  const sourceIsArray = Array.isArray(source);
-  const targetIsArray = Array.isArray(target);
-  const sourceAndTargetTypesMatch = sourceIsArray === targetIsArray;
-
-  if (!sourceAndTargetTypesMatch) {
-    return deepmergeCloneUnlessOtherwiseSpecified(source, options);
-  } else if (sourceIsArray) {
-    return options.arrayMerge(target, source, options);
-  } else {
-    return deepmergeMergeObject(target, source, options);
-  }
-}
-
-// Inlined from `parse-srcset` (https://github.com/albell/parse-srcset)
-// to avoid a CommonJS-only dependency that defeats ESM-only bundling.
-// Based super duper closely on the reference algorithm at:
-// https://html.spec.whatwg.org/multipage/embedded-content.html#parse-a-srcset-attribute
-function parseSrcset(input) {
-  function isSpace(c) {
-    return (c === '\u0020' || // space
-      c === '\u0009' || // horizontal tab
-      c === '\u000A' || // new line
-      c === '\u000C' || // form feed
-      c === '\u000D');  // carriage return
-  }
-
-  function collectCharacters(regEx) {
-    let chars;
-    const match = regEx.exec(input.substring(pos));
-    if (match) {
-      chars = match[0];
-      pos += chars.length;
-      return chars;
-    }
-  }
-
-  const inputLength = input.length;
-  // (Don't use \s, to avoid matching non-breaking space)
-  // eslint-disable-next-line no-control-regex
-  const regexLeadingSpaces = /^[ \t\n\r\u000c]+/;
-  // eslint-disable-next-line no-control-regex
-  const regexLeadingCommasOrSpaces = /^[, \t\n\r\u000c]+/;
-  // eslint-disable-next-line no-control-regex
-  const regexLeadingNotSpaces = /^[^ \t\n\r\u000c]+/;
-  const regexTrailingCommas = /[,]+$/;
-  const regexNonNegativeInteger = /^\d+$/;
-  const regexFloatingPoint = /^-?(?:[0-9]+|[0-9]*\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/;
-
-  let url, descriptors, currentDescriptor, state, c;
-  let pos = 0;
-  const candidates = [];
-
-  while (true) {
-    collectCharacters(regexLeadingCommasOrSpaces);
-
-    if (pos >= inputLength) {
-      return candidates;
-    }
-
-    url = collectCharacters(regexLeadingNotSpaces);
-    descriptors = [];
-
-    if (url.slice(-1) === ',') {
-      url = url.replace(regexTrailingCommas, '');
-      parseDescriptors();
-    } else {
-      tokenize();
-    }
-  }
-
-  function tokenize() {
-    collectCharacters(regexLeadingSpaces);
-    currentDescriptor = '';
-    state = 'in descriptor';
-
-    while (true) {
-      c = input.charAt(pos);
-
-      if (state === 'in descriptor') {
-        if (isSpace(c)) {
-          if (currentDescriptor) {
-            descriptors.push(currentDescriptor);
-            currentDescriptor = '';
-            state = 'after descriptor';
-          }
-        } else if (c === ',') {
-          pos += 1;
-          if (currentDescriptor) {
-            descriptors.push(currentDescriptor);
-          }
-          parseDescriptors();
-          return;
-        } else if (c === '(') {
-          currentDescriptor = currentDescriptor + c;
-          state = 'in parens';
-        } else if (c === '') {
-          if (currentDescriptor) {
-            descriptors.push(currentDescriptor);
-          }
-          parseDescriptors();
-          return;
-        } else {
-          currentDescriptor = currentDescriptor + c;
-        }
-      } else if (state === 'in parens') {
-        if (c === ')') {
-          currentDescriptor = currentDescriptor + c;
-          state = 'in descriptor';
-        } else if (c === '') {
-          descriptors.push(currentDescriptor);
-          parseDescriptors();
-          return;
-        } else {
-          currentDescriptor = currentDescriptor + c;
-        }
-      } else if (state === 'after descriptor') {
-        if (isSpace(c)) {
-          // Stay in this state.
-        } else if (c === '') {
-          parseDescriptors();
-          return;
-        } else {
-          state = 'in descriptor';
-          pos -= 1;
-        }
-      }
-
-      pos += 1;
-    }
-  }
-
-  function parseDescriptors() {
-    let pError = false;
-    let w, d, h, i;
-    const candidate = {};
-    let desc, lastChar, value, intVal, floatVal;
-
-    for (i = 0; i < descriptors.length; i++) {
-      desc = descriptors[i];
-
-      lastChar = desc[desc.length - 1];
-      value = desc.substring(0, desc.length - 1);
-      intVal = parseInt(value, 10);
-      floatVal = parseFloat(value);
-
-      if (regexNonNegativeInteger.test(value) && (lastChar === 'w')) {
-        if (w || d) {
-          pError = true;
-        }
-        if (intVal === 0) {
-          pError = true;
-        } else {
-          w = intVal;
-        }
-      } else if (regexFloatingPoint.test(value) && (lastChar === 'x')) {
-        if (w || d || h) {
-          pError = true;
-        }
-        if (floatVal < 0) {
-          pError = true;
-        } else {
-          d = floatVal;
-        }
-      } else if (regexNonNegativeInteger.test(value) && (lastChar === 'h')) {
-        if (h || d) {
-          pError = true;
-        }
-        if (intVal === 0) {
-          pError = true;
-        } else {
-          h = intVal;
-        }
-      } else {
-        pError = true;
-      }
-    }
-
-    if (!pError) {
-      candidate.url = url;
-      if (w) {
-        candidate.w = w;
-      }
-      if (d) {
-        candidate.d = d;
-      }
-      if (h) {
-        candidate.h = h;
-      }
-      candidates.push(candidate);
-    } else if (typeof console !== 'undefined' && console.log) {
-      console.log(
-        `Invalid srcset descriptor found in '${input}' at '${desc}'.`
-      );
-    }
-  }
-}
-
-// Inlined from `launder` (https://github.com/apostrophecms/apostrophe/tree/main/packages/launder)
-// to avoid pulling in a CommonJS dependency (and its own CJS `dayjs` dependency),
-// which defeats ESM-only bundling. Kept in sync manually; it is a small, stable function.
-//
-// Strip characters browsers ignore inside URLs (control chars and
-// embedded HTML comments) that are commonly used to sneak XSS
-// payloads past simple scheme checks.
-function launderCleanHref(href) {
-  // eslint-disable-next-line no-control-regex
-  href = href.replace(/[\x00-\x20]+/g, '');
-  while (true) {
-    const firstIndex = href.indexOf('<!--');
-    if (firstIndex === -1) {
-      break;
-    }
-    const lastIndex = href.indexOf('-->', firstIndex + 4);
-    if (lastIndex === -1) {
-      break;
-    }
-    href = href.substring(0, firstIndex) + href.substring(lastIndex + 3);
-  }
-  return href;
-}
-
-// Returns true if `href` should be rejected as unsafe.
-function launderNaughtyHref(href, options) {
-  options = options || {};
-  const allowedSchemes = options.allowedSchemes ||
-    [ 'http', 'https', 'ftp', 'mailto', 'tel', 'sms' ];
-  const allowProtocolRelative = (options.allowProtocolRelative !== false);
-  if (typeof href !== 'string') {
-    return false;
-  }
-  href = launderCleanHref(href);
-  const matches = href.match(/^([a-zA-Z][a-zA-Z0-9.\-+]*):/);
-  if (!matches) {
-    if (href.match(/^[/\\]{2}/)) {
-      return !allowProtocolRelative;
-    }
-    return false;
-  }
-  const scheme = matches[1].toLowerCase();
-  return allowedSchemes.indexOf(scheme) === -1;
-}
-// Tags that can conceivably represent stand-alone media.
-const mediaTags = [
-  'img', 'audio', 'video', 'picture', 'svg',
-  'object', 'map', 'iframe', 'embed'
-];
-// Tags that are inherently vulnerable to being used in XSS attacks.
-const vulnerableTags = [ 'script', 'style' ];
-
-function each(obj, cb) {
-  if (obj) {
-    Object.keys(obj).forEach(function (key) {
-      cb(obj[key], key);
-    });
-  }
-}
-
-// Avoid false positives with .__proto__, .hasOwnProperty, etc.
-function has(obj, key) {
-  return ({}).hasOwnProperty.call(obj, key);
-}
-
-// Returns those elements of `a` for which `cb(a)` returns truthy
-function filter(a, cb) {
-  const n = [];
-  each(a, function(v) {
-    if (cb(v)) {
-      n.push(v);
-    }
-  });
-  return n;
-}
-
-function isEmptyObject(obj) {
-  for (const key in obj) {
-    if (has(obj, key)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function stringifySrcset(parsedSrcset) {
-  return parsedSrcset.map(function(part) {
-    if (!part.url) {
-      throw new Error('URL missing');
-    }
-
-    return (
-      part.url +
-      (part.w ? ` ${part.w}w` : '') +
-      (part.h ? ` ${part.h}h` : '') +
-      (part.d ? ` ${part.d}x` : '')
-    );
-  }).join(', ');
-}
-
-export default sanitizeHtml;
-
-// A valid attribute name.
-// We use a tolerant definition based on the set of strings defined by
-// html.spec.whatwg.org/multipage/parsing.html#before-attribute-name-state
-// and html.spec.whatwg.org/multipage/parsing.html#attribute-name-state .
-// The characters accepted are ones which can be appended to the attribute
-// name buffer without triggering a parse error:
-//   * unexpected-equals-sign-before-attribute-name
-//   * unexpected-null-character
-//   * unexpected-character-in-attribute-name
-// We exclude the empty string because it's impossible to get to the after
-// attribute name state with an empty attribute name buffer.
-const VALID_HTML_ATTRIBUTE_NAME = /^[^\0\t\n\f\r /<=>]+$/;
+import { isPlainObject } from './lib/is-plain-object.js';
+import { escapeStringRegexp } from './lib/escape-string-regexp.js';
+import { deepmerge } from './lib/deepmerge.js';
+import { parseSrcset, stringifySrcset } from './lib/srcset.js';
+import { naughtyHref as isNaughtyHref } from './lib/href-safety.js';
+import {
+  each, has, filter, isEmptyObject
+} from './lib/utils.js';
+import {
+  mediaTags, vulnerableTags, VALID_HTML_ATTRIBUTE_NAME, htmlParserDefaults
+} from './lib/constants.js';
+import { defaults } from './lib/defaults.js';
+import { simpleTransform } from './lib/simple-transform.js';
 
 // Ignore the _recursing flag; it's there for recursive
 // invocation as a guard against this exploit:
@@ -478,12 +55,24 @@ function sanitizeHtml(html, options, _recursing) {
     };
   }
 
-  options = Object.assign({}, sanitizeHtml.defaults, options);
+  options = Object.assign({}, defaults, options);
   options.parser = Object.assign({}, htmlParserDefaults, options.parser);
 
+  // A Set gives O(1) membership checks instead of scanning the allowedTags
+  // array on every open tag, which matters for documents with many tags.
+  // Only used when allowedTags is a real array; anything else (e.g. a
+  // string) falls back to the original .indexOf() behavior.
+  const allowedTagsSet = Array.isArray(options.allowedTags)
+    ? new Set(options.allowedTags)
+    : null;
   const tagAllowed = function (name) {
-    return options.allowedTags === false ||
-      (options.allowedTags || []).indexOf(name) > -1;
+    if (options.allowedTags === false) {
+      return true;
+    }
+    if (allowedTagsSet !== null) {
+      return allowedTagsSet.has(name);
+    }
+    return (options.allowedTags || []).indexOf(name) > -1;
   };
 
   // vulnerableTags
@@ -568,7 +157,7 @@ function sanitizeHtml(html, options, _recursing) {
     if (typeof transform === 'function') {
       transFun = transform;
     } else if (typeof transform === 'string') {
-      transFun = sanitizeHtml.simpleTransform(transform);
+      transFun = simpleTransform(transform);
     }
     if (tag === '*') {
       transformTagsAll = transFun;
@@ -1104,18 +693,16 @@ function sanitizeHtml(html, options, _recursing) {
     }
     if (options.parser.decodeEntities) {
       s = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      if (quote) {
-        s = s.replace(/"/g, '&quot;');
-      }
+    } else {
+      // TODO: this is inadequate because it will pass `&0;`. This approach
+      // will not work, each & must be considered with regard to whether it
+      // is followed by a 100% syntactically valid entity or not, and escaped
+      // if it is not. If this bothers you, don't set parser.decodeEntities
+      // to false. (The default is true.)
+      s = s.replace(/&(?![a-zA-Z0-9#]{1,20};)/g, '&amp;') // Match ampersands not part of existing HTML entity
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
     }
-    // TODO: this is inadequate because it will pass `&0;`. This approach
-    // will not work, each & must be considered with regard to whether it
-    // is followed by a 100% syntactically valid entity or not, and escaped
-    // if it is not. If this bothers you, don't set parser.decodeEntities
-    // to false. (The default is true.)
-    s = s.replace(/&(?![a-zA-Z0-9#]{1,20};)/g, '&amp;') // Match ampersands not part of existing HTML entity
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
     if (quote) {
       s = s.replace(/"/g, '&quot;');
     }
@@ -1128,7 +715,7 @@ function sanitizeHtml(html, options, _recursing) {
     const allowedSchemes = has(options.allowedSchemesByTag, name)
       ? options.allowedSchemesByTag[name]
       : (options.allowedSchemes || []);
-    return launderNaughtyHref(href, {
+    return isNaughtyHref(href, {
       allowedSchemes,
       allowProtocolRelative: options.allowProtocolRelative
     });
@@ -1263,122 +850,7 @@ function sanitizeHtml(html, options, _recursing) {
   }
 }
 
-// Defaults are accessible to you so that you can use them as a starting point
-// programmatically if you wish
+sanitizeHtml.defaults = defaults;
+sanitizeHtml.simpleTransform = simpleTransform;
 
-const htmlParserDefaults = {
-  decodeEntities: true
-};
-sanitizeHtml.defaults = {
-  allowedTags: [
-    // Sections derived from MDN element categories and limited to the more
-    // benign categories.
-    // https://developer.mozilla.org/en-US/docs/Web/HTML/Element
-    // Content sectioning
-    'address', 'article', 'aside', 'footer', 'header',
-    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hgroup',
-    'main', 'nav', 'section',
-    // Text content
-    'blockquote', 'dd', 'div', 'dl', 'dt', 'figcaption', 'figure',
-    'hr', 'li', 'menu', 'ol', 'p', 'pre', 'ul',
-    // Inline text semantics
-    'a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code', 'data', 'dfn',
-    'em', 'i', 'kbd', 'mark', 'q',
-    'rb', 'rp', 'rt', 'rtc', 'ruby',
-    's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'time', 'u', 'var', 'wbr',
-    // Table content
-    'caption', 'col', 'colgroup', 'table', 'tbody', 'td', 'tfoot', 'th',
-    'thead', 'tr'
-  ],
-  // Tags that cannot be boolean
-  nonBooleanAttributes: [
-    'abbr', 'accept', 'accept-charset', 'accesskey', 'action',
-    'allow', 'alt', 'as', 'autocapitalize', 'autocomplete',
-    'blocking', 'charset', 'cite', 'class', 'color', 'cols',
-    'colspan', 'content', 'contenteditable', 'coords', 'crossorigin',
-    'data', 'datetime', 'decoding', 'dir', 'dirname', 'download',
-    'draggable', 'enctype', 'enterkeyhint', 'fetchpriority', 'for',
-    'form', 'formaction', 'formenctype', 'formmethod', 'formtarget',
-    'headers', 'height', 'hidden', 'high', 'href', 'hreflang',
-    'http-equiv', 'id', 'imagesizes', 'imagesrcset', 'inputmode',
-    'integrity', 'is', 'itemid', 'itemprop', 'itemref', 'itemtype',
-    'kind', 'label', 'lang', 'list', 'loading', 'low', 'max',
-    'maxlength', 'media', 'method', 'min', 'minlength', 'name',
-    'nonce', 'optimum', 'pattern', 'ping', 'placeholder', 'popover',
-    'popovertarget', 'popovertargetaction', 'poster', 'preload',
-    'referrerpolicy', 'rel', 'rows', 'rowspan', 'sandbox', 'scope',
-    'shape', 'size', 'sizes', 'slot', 'span', 'spellcheck', 'src',
-    'srcdoc', 'srclang', 'srcset', 'start', 'step', 'style',
-    'tabindex', 'target', 'title', 'translate', 'type', 'usemap',
-    'value', 'width', 'wrap',
-    // Event handlers
-    'onauxclick', 'onafterprint', 'onbeforematch', 'onbeforeprint',
-    'onbeforeunload', 'onbeforetoggle', 'onblur', 'oncancel',
-    'oncanplay', 'oncanplaythrough', 'onchange', 'onclick', 'onclose',
-    'oncontextlost', 'oncontextmenu', 'oncontextrestored', 'oncopy',
-    'oncuechange', 'oncut', 'ondblclick', 'ondrag', 'ondragend',
-    'ondragenter', 'ondragleave', 'ondragover', 'ondragstart',
-    'ondrop', 'ondurationchange', 'onemptied', 'onended',
-    'onerror', 'onfocus', 'onformdata', 'onhashchange', 'oninput',
-    'oninvalid', 'onkeydown', 'onkeypress', 'onkeyup',
-    'onlanguagechange', 'onload', 'onloadeddata', 'onloadedmetadata',
-    'onloadstart', 'onmessage', 'onmessageerror', 'onmousedown',
-    'onmouseenter', 'onmouseleave', 'onmousemove', 'onmouseout',
-    'onmouseover', 'onmouseup', 'onoffline', 'ononline', 'onpagehide',
-    'onpageshow', 'onpaste', 'onpause', 'onplay', 'onplaying',
-    'onpopstate', 'onprogress', 'onratechange', 'onreset', 'onresize',
-    'onrejectionhandled', 'onscroll', 'onscrollend',
-    'onsecuritypolicyviolation', 'onseeked', 'onseeking', 'onselect',
-    'onslotchange', 'onstalled', 'onstorage', 'onsubmit', 'onsuspend',
-    'ontimeupdate', 'ontoggle', 'onunhandledrejection', 'onunload',
-    'onvolumechange', 'onwaiting', 'onwheel'
-  ],
-  disallowedTagsMode: 'discard',
-  allowedAttributes: {
-    a: [ 'href', 'name', 'target' ],
-    // We don't currently allow img itself by default, but
-    // these attributes would make sense if we did.
-    img: [ 'src', 'srcset', 'alt', 'title', 'width', 'height', 'loading' ]
-  },
-  allowedEmptyAttributes: [
-    'alt'
-  ],
-  // Lots of these won't come up by default because we don't allow them
-  selfClosing: [ 'img', 'br', 'hr', 'area', 'base', 'basefont', 'input', 'link', 'meta', 'col' ],
-  // URL schemes we permit
-  allowedSchemes: [ 'http', 'https', 'ftp', 'mailto', 'tel' ],
-  allowedSchemesByTag: {},
-  allowedSchemesAppliedToAttributes: [
-    'href', 'src', 'cite',
-    'action', 'formaction', 'data', 'xlink:href',
-    'poster', 'background', 'ping',
-    'longdesc', 'usemap', 'codebase', 'classid', 'archive',
-    'profile', 'manifest', 'itemid',
-    'dynsrc', 'lowsrc'
-  ],
-  allowProtocolRelative: true,
-  enforceHtmlBoundary: false,
-  parseStyleAttributes: true,
-  preserveEscapedAttributes: false
-};
-
-sanitizeHtml.simpleTransform = function(newTagName, newAttribs, merge) {
-  merge = (merge === undefined) ? true : merge;
-  newAttribs = newAttribs || {};
-
-  return function(tagName, attribs) {
-    let attrib;
-    if (merge) {
-      for (attrib in newAttribs) {
-        attribs[attrib] = newAttribs[attrib];
-      }
-    } else {
-      attribs = newAttribs;
-    }
-
-    return {
-      tagName: newTagName,
-      attribs
-    };
-  };
-};
+export default sanitizeHtml;
