@@ -9,10 +9,12 @@ import {
   each, has, filter, isEmptyObject
 } from './lib/utils.js';
 import {
-  mediaTags, vulnerableTags, VALID_HTML_ATTRIBUTE_NAME, htmlParserDefaults
+  mediaTags, vulnerableTags, svgAnimationTags, alwaysUrlAttributes,
+  VALID_HTML_ATTRIBUTE_NAME, htmlParserDefaults
 } from './lib/constants.js';
 import { defaults } from './lib/defaults.js';
 import { simpleTransform } from './lib/simple-transform.js';
+import { loggerFor } from './lib/logger.js';
 
 // Ignore the _recursing flag; it's there for recursive
 // invocation as a guard against this exploit:
@@ -58,6 +60,8 @@ function sanitizeHtml(html, options, _recursing) {
   options = Object.assign({}, defaults, options);
   options.parser = Object.assign({}, htmlParserDefaults, options.parser);
 
+  const logger = loggerFor(options);
+
   // A Set gives O(1) membership checks instead of scanning the allowedTags
   // array on every open tag, which matters for documents with many tags.
   // Only used when allowedTags is a real array; anything else (e.g. a
@@ -78,7 +82,12 @@ function sanitizeHtml(html, options, _recursing) {
   // vulnerableTags
   vulnerableTags.forEach(function (tag) {
     if (tagAllowed(tag) && !options.allowVulnerableTags) {
-      console.warn(`\n\n⚠️ Your \`allowedTags\` option includes, \`${tag}\`, which is inherently\nvulnerable to XSS attacks. Please remove it from \`allowedTags\`.\nOr, to disable this warning, add the \`allowVulnerableTags\` option\nand ensure you are accounting for this risk.\n\n`);
+      logger.warn(
+        `Your \`allowedTags\` option includes \`${tag}\`, which is inherently ` +
+        'vulnerable to XSS attacks. Please remove it from `allowedTags`, or, ' +
+        'to disable this warning, add the `allowVulnerableTags` option and ' +
+        'ensure you are accounting for this risk.'
+      );
     }
   });
 
@@ -222,7 +231,7 @@ function sanitizeHtml(html, options, _recursing) {
         }
       }
 
-      if (!tagAllowed(name) || (options.disallowedTagsMode === 'recursiveEscape' && !isEmptyObject(skipMap)) || (options.nestingLimit != null && depth >= options.nestingLimit)) {
+      if (!tagAllowed(name) || animatesUrlAttribute(name, attribs) || (options.disallowedTagsMode === 'recursiveEscape' && !isEmptyObject(skipMap)) || (options.nestingLimit != null && depth >= options.nestingLimit)) {
         skip = true;
         skipMap[depth] = true;
         if (options.disallowedTagsMode === 'discard' || options.disallowedTagsMode === 'completelyDiscard') {
@@ -267,10 +276,30 @@ function sanitizeHtml(html, options, _recursing) {
           result += ' ' + a + '="' + escapeHtml((value || ''), true) + '"';
         });
       } else if (!allowedAttributesMap || has(allowedAttributesMap, name) || allowedAttributesMap['*']) {
+        // `<meta http-equiv="refresh" content="0;url=...">` embeds a URL
+        // inside a compound `content` value rather than as its own attribute,
+        // so it never reaches naughtyHref via allowedSchemesAppliedToAttributes.
+        // Detect it up front (attribute name/case are already normalized by
+        // htmlparser2) so the `content` value can be scheme-checked below.
+        const isMetaRefresh = name === 'meta' &&
+          typeof attribs['http-equiv'] === 'string' &&
+          attribs['http-equiv'].trim().toLowerCase() === 'refresh';
         each(attribs, function(value, a) {
           if (!VALID_HTML_ATTRIBUTE_NAME.test(a)) {
             // This prevents part of an attribute name in the output from being
             // interpreted as the end of an attribute, or end of a tag.
+            delete frame.attribs[a];
+            return;
+          }
+          if (a === 'srcdoc') {
+            // `srcdoc` is a raw HTML sink: browsers HTML-attribute-decode this
+            // value and parse the result as a full document. Escaping it (as
+            // we do for every other string attribute) only prevents breaking
+            // out of the attribute in our own output — the browser's own
+            // decoding step undoes that escaping before the content is parsed
+            // as markup. Safely allowing it would require recursively
+            // sanitizing its contents as HTML, which is out of scope here, so
+            // it is always stripped regardless of allowedAttributes.
             delete frame.attribs[a];
             return;
           }
@@ -325,6 +354,21 @@ function sanitizeHtml(html, options, _recursing) {
               if (naughtyHref(name, value)) {
                 delete frame.attribs[a];
                 return;
+              }
+            }
+
+            if (isMetaRefresh && a === 'content') {
+              const match = /^\s*[\d.]*\s*;\s*url\s*=\s*(.*)$/i.exec(value);
+              if (match) {
+                let url = match[1].trim();
+                const quote = url.charAt(0);
+                if ((quote === '"' || quote === '\'') && url.charAt(url.length - 1) === quote) {
+                  url = url.slice(1, -1);
+                }
+                if (naughtyHref('content', url)) {
+                  delete frame.attribs[a];
+                  return;
+                }
               }
             }
 
@@ -466,7 +510,14 @@ function sanitizeHtml(html, options, _recursing) {
                   }
                 } catch (e) {
                   if (typeof window !== 'undefined') {
-                    console.warn('Failed to parse "' + name + ' {' + value + '}' + '", If you\'re running this in a browser, we recommend to disable style parsing: options.parseStyleAttributes: false, since this only works in a node environment due to a postcss dependency, More info: https://github.com/apostrophecms/sanitize-html/issues/547');
+                    logger.warn(
+                      `Failed to parse "${name} {${value}}". If you are ` +
+                      'running this in a browser, we recommend disabling ' +
+                      'style parsing with the parseStyleAttributes option, ' +
+                      'since it only works in a node environment due to a ' +
+                      'postcss dependency. More info: ' +
+                      'https://github.com/apostrophecms/sanitize-html/issues/547'
+                    );
                   }
                   delete frame.attribs[a];
                   return;
@@ -521,6 +572,16 @@ function sanitizeHtml(html, options, _recursing) {
 
       if (options.disallowedTagsMode === 'completelyDiscard' && !tagAllowed(tag)) {
         text = '';
+      } else if (
+        // htmlparser2 treats <iframe> as a raw-text element, so markup inside
+        // (including after an unclosed <iframe>) arrives as a single text node.
+        // When the iframe is discarded, re-sanitize that fallback markup as HTML
+        // instead of escaping it as plain text (issue #5550).
+        tag === 'iframe' &&
+        !tagAllowed(tag) &&
+        options.disallowedTagsMode === 'discard'
+      ) {
+        result += sanitizeHtml(text, options);
       } else if (tag && tagAllowed(tag) && (options.disallowedTagsMode === 'discard' || options.disallowedTagsMode === 'completelyDiscard') && ((tag === 'script') || (tag === 'style'))) {
         // htmlparser2 gives us these as-is. Escaping them ruins the content. Allowing
         // script tags is, by definition, game over for XSS protection, so if that's
@@ -707,6 +768,33 @@ function sanitizeHtml(html, options, _recursing) {
       s = s.replace(/"/g, '&quot;');
     }
     return s;
+  }
+
+  // SVG SMIL animation elements (`<animate>`, `<set>`, etc.) can retarget
+  // their `values`/`to`/`by`/`from` attribute into a target attribute named
+  // by `attributeName`, applied by the browser *after* sanitization. If that
+  // target is URL-bearing (e.g. `href`), the animation values never go
+  // through naughtyHref, so a `javascript:` entry reaches a live link sink.
+  // There is no safe per-value check here (the values are copied out from
+  // under us), so any animation targeting a URL attribute is disallowed
+  // entirely, the same as an unlisted tag.
+  function animatesUrlAttribute(name, attribs) {
+    if (svgAnimationTags.indexOf(name.toLowerCase()) === -1) {
+      return false;
+    }
+    const schemeCheckedAttributes = options.allowedSchemesAppliedToAttributes || [];
+    return Object.keys(attribs || {}).some(function(attributeName) {
+      if (attributeName.toLowerCase() !== 'attributename') {
+        return false;
+      }
+      const target = (attribs[attributeName] || '').trim().toLowerCase();
+      // The target may be namespace prefixed (`xlink:href`). Which prefixes are
+      // in scope depends on the document, so consider the local name too.
+      const localName = target.slice(target.lastIndexOf(':') + 1);
+      return alwaysUrlAttributes.indexOf(localName) !== -1 ||
+        schemeCheckedAttributes.indexOf(target) !== -1 ||
+        schemeCheckedAttributes.indexOf(localName) !== -1;
+    });
   }
 
   function naughtyHref(name, href) {

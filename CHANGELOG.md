@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- Added a `logger` option: pass a console-shaped object (any of `debug`, `info`, `warn`, `error`) to receive `sanitize-html`'s own diagnostics (the vulnerable-tag notice, the style-parsing failure notice) instead of the console. Any method not provided falls back to the console, and behavior is unchanged if the option is not set. Ported from upstream `apostrophecms/apostrophe`.
+- Fixed `<iframe>` content being escaped as plain text instead of preserved when the tag itself is discarded. `htmlparser2` treats `iframe` as a raw-text element, so markup following a disallowed iframe (including after an unclosed one) previously arrived and was emitted as escaped text rather than being re-sanitized, losing any allowed tags it contained. It is now recursively re-sanitized as HTML, consistent with how other discarded tags keep their (sanitized) content. Ported from upstream `apostrophecms/apostrophe` (issue #5550).
+
+### Security
+
+- Fixed an XSS bypass (tracked upstream as CVE-2026-84371) in which an SVG SMIL animation element (`animate`, `animateColor`, `animateMotion`, `animateTransform`, `set`) with `attributeName` pointing at a URL-bearing attribute (e.g. `href`, or any attribute listed in `allowedSchemesAppliedToAttributes`) could carry a `javascript:` destination inside its `values`/`to`/`by`/`from` attribute. Because the browser copies that value into the target attribute *after* sanitization, it never passed through scheme checking. Any such animation element is now disallowed outright, the same as an unlisted tag. The default configuration is not affected; the precondition is an `allowedTags`/`allowedAttributes` configuration that explicitly permits SVG animation elements.
+- `iframe[srcdoc]` is now always stripped, regardless of `allowedAttributes` configuration. `srcdoc` is a raw HTML sink: browsers HTML-attribute-decode its value and parse the result as a full document, so escaping it as an ordinary string attribute (as was done previously) does not prevent markup and event handlers from executing once the browser decodes it back. There is no safe way to allow it without recursively sanitizing its contents, which is out of scope, so it is now unconditionally removed. Only affects configurations that explicitly allowlist `srcdoc` on `iframe` (long-standing issue, see apostrophecms/sanitize-html#217).
+- `<meta http-equiv="refresh" content="...;url=...">` now has the URL embedded in `content` scheme-checked and the attribute stripped if it resolves to a disallowed scheme (e.g. `javascript:`). Previously `content` was treated as an opaque string and never checked, because the URL is embedded inside a compound value rather than being its own attribute. Only affects configurations that explicitly allowlist `meta`/`http-equiv`/`content`, which is not part of the default `allowedTags`.
+
 ## 2.17.6 (2026-07-10)
 
 ### Fixes

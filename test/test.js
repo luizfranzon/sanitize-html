@@ -686,7 +686,11 @@ describe('sanitizeHtml', function() {
 
   it('should deliver a warning if using vulnerable tags', function() {
     const spy = sinon.spy(console, 'warn');
-    const message = '\n\n⚠️ Your `allowedTags` option includes, `style`, which is inherently\nvulnerable to XSS attacks. Please remove it from `allowedTags`.\nOr, to disable this warning, add the `allowVulnerableTags` option\nand ensure you are accounting for this risk.\n\n';
+    const message = 'Your `allowedTags` option includes `style`, which is ' +
+      'inherently vulnerable to XSS attacks. Please remove it from ' +
+      '`allowedTags`, or, to disable this warning, add the ' +
+      '`allowVulnerableTags` option and ensure you are accounting for this ' +
+      'risk.';
 
     sanitizeHtml(
       '<style></style>',
@@ -696,6 +700,28 @@ describe('sanitizeHtml', function() {
     );
 
     assert(spy.calledWith(message));
+    // Restore the spied-upon method
+    /* eslint-disable-next-line no-console */
+    console.warn.restore();
+  });
+
+  it('should deliver warnings to the logger option instead of the console', function() {
+    const spy = sinon.spy(console, 'warn');
+    const warnings = [];
+
+    sanitizeHtml(
+      '<style></style>',
+      {
+        allowedTags: [ 'style' ],
+        logger: {
+          warn: (message) => warnings.push(message)
+        }
+      }
+    );
+
+    assert.equal(warnings.length, 1);
+    assert(warnings[0].includes('`style`'));
+    assert(spy.notCalled);
     // Restore the spied-upon method
     /* eslint-disable-next-line no-console */
     console.warn.restore();
@@ -2053,6 +2079,27 @@ describe('sanitizeHtml', function() {
       ), '!<xmp>&lt;/xmp&gt;&lt;svg/onload=prompt`xs`&gt;</xmp>!'
     );
   });
+  it('should sanitize away disallowed iframe without escaping fallback html', function() {
+    // Regression for #5550: htmlparser2 treats iframe as raw-text, so an
+    // unclosed iframe's following markup arrives as text and must be
+    // re-sanitized rather than escaped when the iframe is discarded.
+    assert.equal(
+      sanitizeHtml('<iframe src="http://nono.ohno"><i>test</i>'),
+      '<i>test</i>'
+    );
+  });
+  it('should re-sanitize closed disallowed iframe fallback html', function() {
+    assert.equal(
+      sanitizeHtml('<iframe src="http://nono.ohno"><i>test</i></iframe>'),
+      '<i>test</i>'
+    );
+  });
+  it('should not allow XSS via disallowed iframe fallback markup', function() {
+    assert.equal(
+      sanitizeHtml('<iframe src="http://evil"><img src=x onerror=alert(1)><b>ok</b>'),
+      '<b>ok</b>'
+    );
+  });
 
   describe('CVE-2026-44990 regression and raw-text edge cases', function() {
     it('should escape raw-text inner content when xmp tag is disallowed and discarded under custom nonTextTags', function() {
@@ -2421,6 +2468,153 @@ describe('sanitizeHtml', function() {
           allowedAttributes: {}
         }),
         '<svg><option></option></svg>'
+      );
+    });
+  });
+
+  describe('SVG SMIL animate/set attributeName=href URI-list scheme-policy bypass', function() {
+    it('should drop an <animate> that retargets href via attributeName, even with a safe leading value', function() {
+      assert.strictEqual(
+        sanitizeHtml(
+          '<svg><a xlink:href="#"><text>click</text><animate attributename="href" values="http://safe.example.com;javascript:alert(document.domain)" begin="click"/></a></svg>',
+          {
+            allowedTags: [ 'svg', 'a', 'text', 'animate' ],
+            allowedAttributes: {
+              a: [ 'xlink:href' ],
+              animate: [ 'attributename', 'values', 'begin', 'dur', 'repeatcount' ]
+            }
+          }
+        ),
+        '<svg><a xlink:href="#"><text>click</text></a></svg>'
+      );
+    });
+
+    it('should drop a <set> that retargets a namespace-prefixed xlink:href via attributeName', function() {
+      assert.strictEqual(
+        sanitizeHtml(
+          '<svg><a xlink:href="#"><set attributename="xlink:href" to="javascript:alert(1)"/></a></svg>',
+          {
+            allowedTags: [ 'svg', 'a', 'set' ],
+            allowedAttributes: { a: [ 'xlink:href' ], set: [ 'attributename', 'to' ] }
+          }
+        ),
+        '<svg><a xlink:href="#"></a></svg>'
+      );
+    });
+
+    it('should drop animatecolor/animatemotion/animatetransform targeting href regardless of case', function() {
+      [ 'animateColor', 'animateMotion', 'animateTransform' ].forEach(function(tag) {
+        const lower = tag.toLowerCase();
+        assert.strictEqual(
+          sanitizeHtml(
+            `<svg><a xlink:href="#"><${lower} attributename="HREF" to="javascript:alert(1)"/></a></svg>`,
+            {
+              allowedTags: [ 'svg', 'a', lower ],
+              allowedAttributes: { a: [ 'xlink:href' ], [lower]: [ 'attributename', 'to' ] }
+            }
+          ),
+          '<svg><a xlink:href="#"></a></svg>'
+        );
+      });
+    });
+
+    it('should drop an animation targeting an attribute covered by allowedSchemesAppliedToAttributes even if not href', function() {
+      assert.strictEqual(
+        sanitizeHtml(
+          '<svg><animate attributename="cite" values="javascript:alert(1)"/></svg>',
+          {
+            allowedTags: [ 'svg', 'animate' ],
+            allowedAttributes: { animate: [ 'attributename', 'values' ] }
+          }
+        ),
+        '<svg></svg>'
+      );
+    });
+
+    it('should still allow SMIL animations that do not target a URL-bearing attribute', function() {
+      assert.strictEqual(
+        sanitizeHtml(
+          '<svg><rect><animate attributename="opacity" values="0;1" dur="1s"/></rect></svg>',
+          {
+            allowedTags: [ 'svg', 'rect', 'animate' ],
+            allowedAttributes: { animate: [ 'attributename', 'values', 'dur' ] }
+          }
+        ),
+        '<svg><rect><animate attributename="opacity" values="0;1" dur="1s"></animate></rect></svg>'
+      );
+    });
+  });
+
+  describe('iframe[srcdoc] raw HTML sink', function() {
+    it('should always strip srcdoc even when explicitly allowlisted', function() {
+      assert.strictEqual(
+        sanitizeHtml('<iframe srcdoc="<img src=x onerror=alert(1)>"></iframe>', {
+          allowedTags: [ 'iframe' ],
+          allowedAttributes: { iframe: [ 'srcdoc' ] }
+        }),
+        '<iframe></iframe>'
+      );
+    });
+
+    it('should strip srcdoc while preserving other allowlisted iframe attributes', function() {
+      assert.strictEqual(
+        sanitizeHtml('<iframe title="benign" srcdoc="<script>alert(1)</script>"></iframe>', {
+          allowedTags: [ 'iframe' ],
+          allowedAttributes: { iframe: [ 'title', 'srcdoc' ] }
+        }),
+        '<iframe title="benign"></iframe>'
+      );
+    });
+  });
+
+  describe('meta[http-equiv=refresh] content URL scheme-policy bypass', function() {
+    it('should strip content when it redirects to a javascript: URL', function() {
+      assert.strictEqual(
+        sanitizeHtml('<meta http-equiv="refresh" content="0;url=javascript:alert(1)">', {
+          allowedTags: [ 'meta' ],
+          allowedAttributes: { meta: [ 'http-equiv', 'content' ] }
+        }),
+        '<meta http-equiv="refresh" />'
+      );
+    });
+
+    it('should strip content when the javascript: URL is quoted', function() {
+      assert.strictEqual(
+        sanitizeHtml('<meta http-equiv="refresh" content=\'0; url="javascript:alert(1)"\'>', {
+          allowedTags: [ 'meta' ],
+          allowedAttributes: { meta: [ 'http-equiv', 'content' ] }
+        }),
+        '<meta http-equiv="refresh" />'
+      );
+    });
+
+    it('should be case-insensitive to the http-equiv value', function() {
+      assert.strictEqual(
+        sanitizeHtml('<meta http-equiv="Refresh" content="0;URL=javascript:alert(1)">', {
+          allowedTags: [ 'meta' ],
+          allowedAttributes: { meta: [ 'http-equiv', 'content' ] }
+        }),
+        '<meta http-equiv="Refresh" />'
+      );
+    });
+
+    it('should preserve a benign meta refresh redirecting to an allowed scheme', function() {
+      assert.strictEqual(
+        sanitizeHtml('<meta http-equiv="refresh" content="5;url=https://example.com/">', {
+          allowedTags: [ 'meta' ],
+          allowedAttributes: { meta: [ 'http-equiv', 'content' ] }
+        }),
+        '<meta http-equiv="refresh" content="5;url=https://example.com/" />'
+      );
+    });
+
+    it('should not touch content on a meta tag whose http-equiv is not refresh', function() {
+      assert.strictEqual(
+        sanitizeHtml('<meta http-equiv="content-type" content="text/html; charset=utf-8">', {
+          allowedTags: [ 'meta' ],
+          allowedAttributes: { meta: [ 'http-equiv', 'content' ] }
+        }),
+        '<meta http-equiv="content-type" content="text/html; charset=utf-8" />'
       );
     });
   });

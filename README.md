@@ -634,6 +634,8 @@ const clean = sanitizeHtml('<p><iframe src="https://us02web.zoom.us/embed/12345"
 });
 ```
 
+**`srcdoc` is never allowed on `iframe`, even if listed in `allowedAttributes`.** Unlike `src`, `srcdoc` embeds a full HTML document as the attribute's value; the browser HTML-decodes that value and parses it as markup, so escaping it as an ordinary string attribute does not stop scripts or event handlers inside it from running. There is no way to safely allow it without recursively sanitizing its contents, which `sanitize-html` does not do, so it is always stripped.
+
 ### Script Filters
 
 Similarly to iframes you can allow a script tag on a list of allowlisted domains
@@ -796,6 +798,24 @@ nestingLimit: 6
 ```
 
 This will prevent the user from nesting tags more than 6 levels deep. Tags deeper than that are stripped out exactly as if they were disallowed. Note that this means text is preserved in the usual ways where appropriate.
+
+### Routing warnings to your own logger
+
+sanitize-html writes its own diagnostics - the vulnerable tag notice above, and the style parsing notice in the browser - to the console. If your application has a logging pipeline of its own, pass any console-shaped object as the `logger` option and they are delivered to it instead:
+
+```javascript
+sanitizeHtml(dirty, {
+  logger: myLogger // an object with debug, info, warn and error methods
+});
+```
+
+Any of the four methods that your object does not provide falls back to the console, and without the option at all the console is still the destination, exactly as before.
+
+This matters for applications that write structured logs: a raw `console.warn` bypasses their filtering and formatting, and puts unparseable text on a stream that is expected to be one JSON object per line.
+
+### Known limitation: DOM Clobbering
+
+`sanitize-html` allowlists tags, attributes and (optionally) URL schemes and CSS, but it has no notion of the JavaScript that will later run against the sanitized markup. In particular, it does not restrict `id` or `name` values, including `name` on `<a>`, which is allowed by default. An attacker who can inject sanitized HTML can still choose these values freely, for example `<a name="getElementById">` or `<img name="someGlobal">`. If the page that consumes the output later relies on an unguarded global or property lookup (`window.someGlobal`, an unchecked `document.getElementById(...)` result, etc.), a clobbered element can be substituted for the expected value. This is a general limitation of string-based HTML sanitizers, not something specific to a particular tag or attribute, so it isn't something `sanitize-html` can close by itself: defend against it in your own code by not trusting implicit global/DOM lookups for security-sensitive values, or by giving `id`/`name` a dedicated allowlist via `allowedAttributes` if your use case doesn't need them.
 
 ### Advanced filtering
 
